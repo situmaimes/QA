@@ -3,8 +3,7 @@ from collections import defaultdict
 
 import jieba
 import numpy as np
-import json
-from gensim.models import KeyedVectors
+
 
 def loadEmbedding(filename):
     """
@@ -13,13 +12,15 @@ def loadEmbedding(filename):
     :param filename: 文件名
     :return: embeddings列表和它对应的索引
     """
-    w2vModel = KeyedVectors.load_word2vec_format(filename)
     embeddings = []
     word2idx = defaultdict(list)
-    for word in w2vModel.wv.vocab:
-        word2idx[word] = len(word2idx)
-        embeddings.append(w2vModel[word])
-    embeddings = np.array(embeddings)
+    with open(filename, mode="r", encoding="utf-8") as rf:
+        for line in rf:
+            arr = line.split(" ")
+            embedding = [float(val) for val in arr[1: -1]]
+            word2idx[arr[0]] = len(word2idx)
+            embeddings.append(embedding)
+    
     return embeddings, word2idx
 
 
@@ -63,21 +64,20 @@ def loadData(filename, word2idx, maxLen, training=False):
     question = ""
     questionId = 0
     questions, answers, labels, questionIds = [], [], [], []
-    with open(filename,encoding="utf-8") as rf:
-        data = json.loads(rf.read())
-        for line in data:
-            question=line["question"]
-            questionId += 1
-            questionIdx = sentenceToIndex(line["question"].strip(), word2idx, maxLen)
-            for content in line["passages"]:
-                answer=content["content"]
-                answerIdx = sentenceToIndex(answer.strip(), word2idx, maxLen)
-                if training:
-                    label = content["label"]
-                    labels.append(label)
-                questions.append(questionIdx)
-                answers.append(answerIdx)
-                questionIds.append(questionId)
+    with open(filename, mode="r", encoding="utf-8") as rf:
+        for line in rf.readlines():
+            arr = line.split("\t")
+            if question != arr[0]:
+                question = arr[0]
+                questionId += 1
+            questionIdx = sentenceToIndex(arr[0].strip(), word2idx, maxLen)
+            answerIdx = sentenceToIndex(arr[1].strip(), word2idx, maxLen)
+            if training:
+                label = int(arr[2])
+                labels.append(label)
+            questions.append(questionIdx)
+            answers.append(answerIdx)
+            questionIds.append(questionId)
     return questions, answers, labels, questionIds
 
 

@@ -3,10 +3,8 @@ import time
 
 import tensorflow as tf
 
-import qaData
+import Data
 from qaLSTMNet import QaLSTMNet
-import numpy as np
-
 
 
 def restore():
@@ -23,30 +21,18 @@ def train():
     print("重新训练，请保证计算机拥有至少8G空闲内存与2G空闲显存")
     # 准备训练数据
     print("正在准备训练数据，大约需要五分钟...")
-    qTrain, aTrain, lTrain, qIdTrain = qaData.loadData(trainingFile, word2idx, unrollSteps, True)
-
+    qTrain, aTrain, lTrain, qIdTrain = Data.loadData(trainingFile, word2idx, unrollSteps, True)
+    qDevelop, aDevelop, lDevelop, qIdDevelop = Data.loadData(developFile, word2idx, unrollSteps, True)
+    trainQuestionCounts = qIdTrain[-1]
+    for i in range(len(qIdDevelop)):
+        qIdDevelop[i] += trainQuestionCounts
     tqs, tta, tfa = [], [], []
-    for question, trueAnswer, falseAnswer in qaData.trainingBatchIter(qTrain , aTrain ,
-                                                                    lTrain , qIdTrain,
+    for question, trueAnswer, falseAnswer in Data.trainingBatchIter(qTrain + qDevelop, aTrain + aDevelop,
+                                                                    lTrain + lDevelop, qIdTrain + qIdDevelop,
                                                                     batchSize):
         tqs.append(question), tta.append(trueAnswer), tfa.append(falseAnswer)
-    tqs=np.array(tqs)
-    tta = np.array(tta)
-    tfa = np.array(tfa)
     print("加载完成！")
-    np.random.seed(10)
-    shuffle_indices = np.random.permutation(np.arange(len(tqs)))
-    tqs_shuffled = tqs[shuffle_indices]
-    tta_shuffled = tta[shuffle_indices]
-    tfa_shuffled = tfa[shuffle_indices]
-
-    # Split train/test set
-    # TODO: This is very crude, should use cross-validation
-    dev_sample_index = -1 * int(0.1 * float(len(tqs)))
-    tqs_train, tqs_dev = tqs_shuffled[:dev_sample_index], tqs_shuffled[dev_sample_index:]
-    tta_train, tta_dev = tta_shuffled[:dev_sample_index], tta_shuffled[dev_sample_index:]
-    tfa_train, tfa_dev = tfa_shuffled[:dev_sample_index], tfa_shuffled[dev_sample_index:]
-    
+    # 开始训练
     print("开始训练，全部训练过程大约需要12小时")
     sess.run(tf.global_variables_initializer())
     lr = learningRate  # 引入局部变量，防止shadow name
@@ -55,7 +41,7 @@ def train():
         optimizer.apply_gradients(zip(grads, tvars))
         trainOp = optimizer.apply_gradients(zip(grads, tvars), global_step=globalStep)
         for epoch in range(epochs):
-            for question, trueAnswer, falseAnswer in zip(tqs_train, tta_train, tfa_train):
+            for question, trueAnswer, falseAnswer in zip(tqs, tta, tfa):
                 startTime = time.time()
                 feed_dict = {
                     lstm.inputQuestions: question,
@@ -69,31 +55,13 @@ def train():
                 print("step:", step, "loss:", loss, "time:", timeUsed)
             saver.save(sess, saveFile)
         lr *= lrDownRate
-    with open(resultFile, 'w') as file:
-        for question, answer in zip(tqs_dev, tta_dev):
-            feed_dict = {
-                lstm.inputTestQuestions: question,
-                lstm.inputTestAnswers: answer,
-                lstm.keep_prob: dropout
-            }
-            _, scores = sess.run([globalStep, lstm.result], feed_dict)
-            for score in scores:
-                print("%.9f" % score + '\n')
-        print("------------------------------------------")
-        for question, answer in zip(tqs_dev, tfa_dev):
-            feed_dict = {
-                lstm.inputTestQuestions: question,
-                lstm.inputTestAnswers: answer,
-                lstm.keep_prob: dropout
-            }
-            _, scores = sess.run([globalStep, lstm.result], feed_dict)
-            for score in scores:
-                print("%.9f" % score + '\n')
-        
+
 
 if __name__ == '__main__':
     # 定义参数
-    trainingFile = "data/train_data_complete.json"
+    trainingFile = "data/training.data"
+    developFile = "data/develop.data"
+    testingFile = "data/testing.data"
     resultFile = "predictRst.score"
     saveFile = "newModel/savedModel"
     trainedModel = "trainedModel/savedModel"
@@ -115,16 +83,17 @@ if __name__ == '__main__':
 
     allow_soft_placement = True  # Allow device soft device placement
     gpuMemUsage = 0.75  # 显存最大使用率
-
+    gpuDevice = "/gpu:0"  # GPU设备名
 
     # 读取测试数据
     print("正在载入测试数据，大约需要一分钟...")
-    embedding, word2idx = qaData.loadEmbedding(embeddingFile)
-    qTest, aTest, _, qIdTest = qaData.loadData(trainingFile, word2idx, unrollSteps)
+    embedding, word2idx = Data.loadEmbedding(embeddingFile)
+    qTest, aTest, _, qIdTest = Data.loadData(testingFile, word2idx, unrollSteps)
     print("测试数据加载完成")
     # 配置TensorFlow
-    with tf.Graph().as_default(), tf.device('/cpu:0'):
-        session_conf = tf.ConfigProto(allow_soft_placement=allow_soft_placement)
+    with tf.Graph().as_default(), tf.device(gpuDevice):
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=gpuMemUsage)
+        session_conf = tf.ConfigProto(allow_soft_placement=allow_soft_placement, gpu_options=gpu_options)
         with tf.Session(config=session_conf).as_default() as sess:
             # 加载LSTM网络
             print("正在加载LSTM网络，大约需要三分钟...")
@@ -151,4 +120,15 @@ if __name__ == '__main__':
                 train()
 
             # 进行测试，输出结果
+            print("正在进行测试，大约需要三分钟...")
+            with open(resultFile, 'w') as file:
+                for question, answer in Data.testingBatchIter(qTest, aTest, batchSize):
+                    feed_dict = {
+                        lstm.inputTestQuestions: question,
+                        lstm.inputTestAnswers: answer,
+                        lstm.keep_prob: dropout
+                    }
+                    _, scores = sess.run([globalStep, lstm.result], feed_dict)
+                    for score in scores:
+                        file.write("%.9f" % score + '\n')
     print("所有步骤完成！程序结束")

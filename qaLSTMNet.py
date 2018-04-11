@@ -24,10 +24,10 @@ class QaLSTMNet(object):
         # 设置word embedding层
         with tf.device("/cpu:0"), tf.name_scope("embedding_layer"):
             tfEmbedding = tf.Variable(tf.to_float(self.embeddings), trainable=True, name="W")
+            
             questions = tf.nn.embedding_lookup(tfEmbedding, self.inputQuestions)
             trueAnswers = tf.nn.embedding_lookup(tfEmbedding, self.inputTrueAnswers)
             falseAnswers = tf.nn.embedding_lookup(tfEmbedding, self.inputFalseAnswers)
-
             testQuestions = tf.nn.embedding_lookup(tfEmbedding, self.inputTestQuestions)
             testAnswers = tf.nn.embedding_lookup(tfEmbedding, self.inputTestAnswers)
 
@@ -45,7 +45,7 @@ class QaLSTMNet(object):
             testQuestion2 = tf.nn.tanh(self.max_pooling(testQuestion1))
             testAnswer1 = self.biLSTMCell(testAnswers, self.rnnSize)
             testAnswer2 = tf.nn.tanh(self.max_pooling(testAnswer1))
-
+        print("dddddddddddddddddddddddddddddddd")
         self.trueCosSim = self.getCosineSimilarity(question2, trueAnswer2)
         self.falseCosSim = self.getCosineSimilarity(question2, falseAnswer2)
         self.loss = self.getLoss(self.trueCosSim, self.falseCosSim, self.margin)
